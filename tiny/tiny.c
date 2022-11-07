@@ -11,9 +11,9 @@
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+void serve_static(int fd, char *filename, int filesize, char *method);
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs);
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 
 int main(int argc, char **argv) {
@@ -35,9 +35,9 @@ int main(int argc, char **argv) {
 
     // 클라이언트 소켓에서 hostname과 port number를 string으로 변환
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
-    printf("Accepted connection from (%s, %s)\n", hostname, port);
+    // printf("Accepted connection from (%s, %s)\n", hostname, port);
     doit(connfd);   // line:netp:tiny:doit    // html 한 번 호출, gif 호출해서 총 2번
-    printf("#########################\n");
+    // printf("#########################\n");
     Close(connfd);  // 서버연결 식별자를 닫아주면 하나의 트랜잭션 끝
   }
 }
@@ -65,7 +65,7 @@ void doit(int fd){    // connfd가 인자로 들어옴
   printf("%s", buf);                              // request header 출력
   sscanf(buf, "%s %s %s", method, uri, version);  // buf에 있는 데이터를 method, uri, version에 담기
 
-  if (strcasecmp(method, "GET")){                 // strcasecmp함수가 같으면 0을 출력, method가 GET이 아니라면 error message 출력
+  if (!(strcasecmp(method, "GET") == 0 || strcasecmp(method, "HEAD") == 0)){                 // strcasecmp함수가 같으면 0을 출력, method가 GET이 아니라면 error message 출력
     clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method");
     return;
   }
@@ -84,14 +84,14 @@ void doit(int fd){    // connfd가 인자로 들어옴
       return;
 
     }
-    serve_static(fd, filename, sbuf.st_size);     // static contents라면, 사이즈를 같이 서버에 보낸다 
+    serve_static(fd, filename, sbuf.st_size, method);     // static contents라면, 사이즈를 같이 서버에 보낸다 
   }
   else {                                          // request file이 dynamic contents면 실행
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)){  // file이 정규파일이 아니거나 사용자 읽기가 안되면 error message 출력
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
       return;
     }
-    serve_dynamic(fd, filename, cgiargs);         // dynamic contents라면, 인자를 같이 서버에 보낸다
+    serve_dynamic(fd, filename, cgiargs, method);         // dynamic contents라면, 인자를 같이 서버에 보낸다
   }
 }
 
@@ -170,7 +170,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs){
 
 // 클라이언트가 원하는 정적 컨텐츠를 받아와서 응답 라인과 헤더를 작성하고 서버에게 보냄
 // 그 후 정적 컨텐츠 파일을 읽어 그 응답 바디를 클라이언트에게 보냄
-void serve_static(int fd, char *filename, int filesize){
+void serve_static(int fd, char *filename, int filesize, char *method){
   int srcfd;
   char *srcp, filetype[MAXLINE], buf[MAXBUF];
 
@@ -189,12 +189,25 @@ void serve_static(int fd, char *filename, int filesize){
   printf("Response headers:\n");
   printf("%s", buf);                                       // 서버 측에서도 출력
 
+  if (strcasecmp(method, "HEAD") ==0){
+    return;
+  }
+
   srcfd = Open(filename, O_RDONLY, 0);                     // filename의 이름을 갖는 파일을 읽기 권한으로 불러옴
-  // Mmap방법 : 파일의 메모리를 그대로 가상 메모리에 매핑함.
+
+  // Malloc
+  srcp = malloc(filesize);
+  Rio_readn(srcfd, srcp, filesize);
+  Close(srcfd);
+  Rio_writen(fd, srcp, filesize);                           
+  free(srcp);
+  
+  /* Mmap방법 : 파일의 메모리를 그대로 가상 메모리에 매핑함.
   srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
   Close(srcfd);
   Rio_writen(fd, srcp, filesize);                           // 해당 메모리에 있는 파일 내용들을 fd에 보냄
   Munmap(srcp, filesize);                                   // Mmap 했으니까 Munmap(malloc하면 free 하듯)
+  */
 }
 
 // get_filetype - Derive file type from filename
@@ -203,10 +216,11 @@ void get_filetype(char *filename, char *filetype){
   else if (strstr(filename, ".gif"))  strcpy(filetype, "image/gif");
   else if (strstr(filename, ".png"))  strcpy(filetype, "image/png");
   else if (strstr(filename, ".jpg"))  strcpy(filetype, "image/jpeg");
+  else if (strstr(filename, ".mp4"))  strcpy(filetype, "video/mp4");
   else  strcpy(filetype, "text/plain");
 }
 
-void serve_dynamic(int fd, char *filename, char *cgiargs){
+void serve_dynamic(int fd, char *filename, char *cgiargs, char *method){
   char buf[MAXLINE], *emptylist[] = {NULL};
 
   /* Return first part of HTTP response */
@@ -217,7 +231,7 @@ void serve_dynamic(int fd, char *filename, char *cgiargs){
 
   if (Fork() == 0){ //Fork 가 0은 자식 프로세스가 있다는 것.
     setenv("QUERY_STRING", cgiargs, 1);
-
+    setenv("REQUEST_METHOD", method, 1);
     // 클라이언트의 표준 출력을 CGI 프로그램의 표준출력과 연결
     // CGI 프로그램에서 printf하면 클라이언트에서 출력
     Dup2(fd, STDOUT_FILENO);              // redirect stdout to clinet
