@@ -6,16 +6,16 @@
 #define MAX_OBJECT_SIZE 102400
 
 /*
- *    Client                    Proxy                                Server   
- *  ----------                ----------                           ----------           
- * | Clientfd |   ------->   |  Connfd  |                         |  Connfd  |  
- *  ----------                ----------                           ----------
- * |          |              | Proxy    |          doit()         |          |
- * |          |              | Clientfd |        --------->       |          |
- * |          |              |          |    request_to_server    | Listenfd |
- * |          |              | Listenfd |                         |          |
- * |          |   <-------   |          |        <---------       |          |        
- *  ----------    Close()     ----------   response_from_server    ----------
+ *    Client                 Proxy(thread)                             Server   
+ *  ----------                ----------                             ----------           
+ * | Clientfd |   ------->   |  Connfd  |                           |  Connfd  |  
+ *  ----------                ----------                             ----------
+ * |          |              | Proxy    |          doit()           |          |
+ * |          |              | Clientfd |        --------->         |          |
+ * |          |              |          |    request_to_server()    | Listenfd |
+ * |          |              | Listenfd |                           |          |
+ * |          |   <-------   |          |        <---------         |          |        
+ *  ----------    Close()     ----------   response_from_server()    ----------
  *                           | CacheMem |
  *                            ----------
  *                          
@@ -26,6 +26,7 @@
 void doit(int fd);
 void request_to_server(int proxy_clientfd, char *uri_to_s);
 void response_from_server(int fd, int proxy_clientfd);
+void *thread(void *vargsp);
 int parse_uri(char *uri, char *port_to_s, char *hostname_to_s, char *uri_to_s);
 
 static const char *user_agent_hdr =
@@ -36,7 +37,8 @@ int main(int argc, char **argv) {
   int listenfd, connfd;
   char hostname[MAXLINE], port[MAXLINE];
   socklen_t clientlen;                                        
-  struct sockaddr_storage clientaddr;                         
+  struct sockaddr_storage clientaddr;   
+  pthread_t tid;                      
 
   if (argc != 2) {                                            
     fprintf(stderr, "usage: %s <port>\n", argv[0]);
@@ -51,11 +53,18 @@ int main(int argc, char **argv) {
     // Client - Proxy(connfd)
     connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);  
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
-    doit(connfd);   
-    Close(connfd);  
+
+    Pthread_create(&tid, NULL, thread, (void *)connfd);               // (&tid : 쓰레드 식별자, NULL : 쓰레드 속성)
   }
 
   return 0;
+}
+
+void *thread(void *vargs){
+  int connfd = (int)vargs;    //arg로 받는 것을 connfd에 넣기
+  Pthread_detach(pthread_self());
+  doit(connfd);
+  Close(connfd);
 }
 
 void doit(int fd){
