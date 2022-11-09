@@ -35,9 +35,7 @@ int main(int argc, char **argv) {
 
     // 클라이언트 소켓에서 hostname과 port number를 string으로 변환
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
-    // printf("Accepted connection from (%s, %s)\n", hostname, port);
-    doit(connfd);   // line:netp:tiny:doit    // html 한 번 호출, gif 호출해서 총 2번
-    // printf("#########################\n");
+    doit(connfd);   // html 한 번 호출, gif 호출해서 총 2번 실행
     Close(connfd);  // 서버연결 식별자를 닫아주면 하나의 트랜잭션 끝
   }
 }
@@ -49,13 +47,6 @@ void doit(int fd){    // connfd가 인자로 들어옴
   char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
   char filename[MAXLINE], cgiargs[MAXLINE];
   rio_t rio;
-
-  // typedef struct {
-  //     int rio_fd;                /* Descriptor for this internal buf */
-  //     int rio_cnt;               /* Unread bytes in internal buf */
-  //     char *rio_bufptr;          /* Next unread byte in internal buf */
-  //     char rio_buf[RIO_BUFSIZE]; /* Internal buffer */
-  // } rio_t;
 
 
   /* Read request line and headers */
@@ -78,20 +69,20 @@ void doit(int fd){    // connfd가 인자로 들어옴
     return;
   }
 
-  if (is_static){                                 // request file이 static contents면 실행
+  if (is_static){                                                 // request file이 static contents면 실행
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {  // file이 정규파일이 아니거나 사용자 읽기가 안되면 error message 출력
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read this file");
       return;
 
     }
-    serve_static(fd, filename, sbuf.st_size, method);     // static contents라면, 사이즈를 같이 서버에 보낸다 
+    serve_static(fd, filename, sbuf.st_size, method);             // static contents라면, 사이즈를 같이 서버에 보낸다 
   }
-  else {                                          // request file이 dynamic contents면 실행
-    if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)){  // file이 정규파일이 아니거나 사용자 읽기가 안되면 error message 출력
+  else {                                                          // request file이 dynamic contents면 실행
+    if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)){   // file이 정규파일이 아니거나 사용자 읽기가 안되면 error message 출력
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
       return;
     }
-    serve_dynamic(fd, filename, cgiargs, method);         // dynamic contents라면, 인자를 같이 서버에 보낸다
+    serve_dynamic(fd, filename, cgiargs, method);                 // dynamic contents라면, 인자를 같이 서버에 보낸다
   }
 }
 
@@ -229,13 +220,14 @@ void serve_dynamic(int fd, char *filename, char *cgiargs, char *method){
   sprintf(buf, "Server: Tiny Web Server\r\n");
   Rio_writen(fd, buf, strlen(buf));
 
-  if (Fork() == 0){ //Fork 가 0은 자식 프로세스가 있다는 것.
+  // if문도 실행되기 때문에 Fork()는 무조건 실행됨
+  if (Fork() == 0){ //Fork 가 0은 자식 프로세스가 있다는 것. 
     setenv("QUERY_STRING", cgiargs, 1);
     setenv("REQUEST_METHOD", method, 1);
     // 클라이언트의 표준 출력을 CGI 프로그램의 표준출력과 연결
     // CGI 프로그램에서 printf하면 클라이언트에서 출력
-    Dup2(fd, STDOUT_FILENO);              // redirect stdout to clinet
-    Execve(filename, emptylist, environ); // run CGI program
+    Dup2(fd, STDOUT_FILENO);              
+    Execve(filename, emptylist, environ); 
   }
-  Wait(NULL);                             // parents waits for and reaps child
+  Wait(NULL);                             
 }
